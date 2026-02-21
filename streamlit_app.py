@@ -16,21 +16,37 @@ def load_assets():
     model = joblib.load(os.path.join(models_dir, 'xgboost_flood_model.pkl'))
     explainer = joblib.load(os.path.join(models_dir, 'shap_explainer.pkl'))
     feature_columns = joblib.load(os.path.join(models_dir, 'feature_columns.pkl'))
-    default_values = joblib.load(os.path.join(models_dir, 'default_values.pkl'))
-    return model, explainer, feature_columns, default_values
+    scaler = joblib.load(os.path.join(models_dir, 'scaler.pkl'))
+    scale_cols = joblib.load(os.path.join(models_dir, 'scale_cols.pkl'))
+    district_stats = joblib.load(os.path.join(models_dir, 'district_stats.pkl'))
+    label_encoders = joblib.load(os.path.join(models_dir, 'label_encoders.pkl'))
+    return model, explainer, feature_columns, scaler, scale_cols, district_stats, label_encoders
 
 try:
-    model, explainer, feature_columns, default_values = load_assets()
+    model, explainer, feature_columns, scaler, scale_cols, district_stats, label_encoders = load_assets()
 except Exception as e:
     st.error(f"Error loading model artifacts: {e}")
     st.stop()
 
-# ✅ PART 3 — Prediction Function
+# ✅ PART 3 — Prediction Function (with Internal Scaling)
 def get_prediction_data(input_dict):
     # Create DataFrame from input
     input_df = pd.DataFrame([input_dict])
     
-    # Ensure correct column order
+    # Apply Label Encoding for District (Model expects encoded district)
+    # The stats already had encoded district as a value, but we are passing string 'district' in input_dict
+    if 'district' in input_df.columns:
+        input_df['district'] = label_encoders['district'].transform(input_df['district'])
+    
+    # Ensure all required features are present (pre-fill with zeros if any missing)
+    for col in feature_columns:
+        if col not in input_df.columns:
+            input_df[col] = 0.0
+            
+    # Apply Internal Scaling
+    input_df[scale_cols] = scaler.transform(input_df[scale_cols])
+    
+    # Ensure correct column order and type
     input_df = input_df[feature_columns].astype(float)
     
     # Predict
@@ -38,68 +54,80 @@ def get_prediction_data(input_dict):
     prediction = max(0, min(100, prediction))
     
     # Compute SHAP values
-    # For PermutationExplainer/Explainer(model.predict), we pass the DF
     shap_values = explainer(input_df)
     
     return prediction, shap_values, input_df
 
 # ✅ PART 4 — PROFESSIONAL STREAMLIT FRONTEND
-st.title("🌊 SL Flood Risk Predictor Dashboard")
+st.title("🌊 SL Flood Risk Predictor")
 st.markdown("#### Predict flood risk using environmental and infrastructure indicators.")
 st.markdown("---")
 
-# UI Layout: Input section
-st.subheader("🛠️ Environmental & Infrastructure Parameters")
-st.info("Inputs are pre-filled with dataset averages. Adjust sliders to match your scenario.")
+# ✅ PART 1 — Location-Based Interface
+districts = sorted(list(district_stats.keys()))
+selected_district = st.selectbox("📍 Select Your District", districts)
+
+# ✅ District Default Logic
+# Get averages for the selected district
+defaults = district_stats[selected_district]
+
+# ✅ PART 3 — REALISTIC INPUT DESIGN
+st.subheader("🛠️ Adjust Parameters (Pre-filled with District Averages)")
 
 # Create columns for grouping
 col1, col2, col3 = st.columns(3)
 
-user_inputs = default_values.copy()
+# Initialize user_inputs with defaults for all feature columns
+user_inputs = defaults.copy()
+user_inputs['district'] = selected_district # Keep the string for encoding later
 
 with col1:
     st.markdown("### 🌍 Geographic Factors")
-    user_inputs['elevation_m'] = st.number_input("Elevation (scaled)", value=float(default_values['elevation_m']), format="%.4f")
-    user_inputs['distance_to_river_m'] = st.number_input("Distance to River (scaled)", value=float(default_values['distance_to_river_m']), format="%.4f")
+    user_inputs['elevation_m'] = st.number_input("Elevation (meters)", value=float(defaults['elevation_m']), step=1.0)
+    user_inputs['distance_to_river_m'] = st.number_input("Distance to River (meters)", value=float(defaults['distance_to_river_m']), step=10.0)
 
 with col2:
     st.markdown("### 🌧 Rainfall Conditions")
-    user_inputs['rainfall_7d_mm'] = st.number_input("Recent Rainfall (7 days) (scaled)", value=float(default_values['rainfall_7d_mm']), format="%.4f")
-    user_inputs['monthly_rainfall_mm'] = st.number_input("Monthly Rainfall (scaled)", value=float(default_values['monthly_rainfall_mm']), format="%.4f")
-    user_inputs['drainage_index'] = st.slider("Drainage Index", 0.0, 1.0, float(default_values['drainage_index']))
+    # Using sliders with district averages as defaults
+    # We'll use reasonable ranges for SL rainfall
+    user_inputs['rainfall_7d_mm'] = st.slider("Rainfall last 7 days (mm)", 0.0, 500.0, float(defaults['rainfall_7d_mm']))
+    user_inputs['monthly_rainfall_mm'] = st.slider("Monthly rainfall (mm)", 0.0, 2000.0, float(defaults['monthly_rainfall_mm']))
+    user_inputs['drainage_index'] = st.slider("Drainage index (0-1)", 0.0, 1.0, float(defaults['drainage_index']))
 
 with col3:
     st.markdown("### 🏙 Urban & Population")
-    user_inputs['population_density_per_km2'] = st.number_input("Population Density (scaled)", value=float(default_values['population_density_per_km2']), format="%.4f")
-    user_inputs['built_up_percent'] = st.slider("Built-up Percentage", 0.0, 100.0, float(default_values['built_up_percent']))
+    user_inputs['population_density_per_km2'] = st.number_input("Population Density (per km²)", value=float(defaults['population_density_per_km2']))
+    user_inputs['built_up_percent'] = st.slider("Built-up percentage (%)", 0.0, 100.0, float(defaults['built_up_percent']))
 
 st.markdown("---")
 col4, col5 = st.columns(2)
 
 with col4:
     st.markdown("### 🏥 Infrastructure Access")
-    user_inputs['infrastructure_score'] = st.slider("Infrastructure Score", 0.0, 100.0, float(default_values['infrastructure_score']))
-    user_inputs['nearest_hospital_km'] = st.number_input("Distance to Hospital (km/scaled)", value=float(default_values['nearest_hospital_km']), format="%.4f")
-    user_inputs['nearest_evac_km'] = st.number_input("Distance to Evac Center (km/scaled)", value=float(default_values['nearest_evac_km']), format="%.4f")
+    user_inputs['infrastructure_score'] = st.slider("Infrastructure Score", 0.0, 100.0, float(defaults['infrastructure_score']))
+    # Note: hospital/evac distances were not in scale_cols but they are in the dataset
+    user_inputs['nearest_hospital_km'] = st.number_input("Distance to nearest hospital (km)", value=float(defaults['nearest_hospital_km']))
+    user_inputs['nearest_evac_km'] = st.number_input("Distance to nearest evacuation center (km)", value=float(defaults['nearest_evac_km']))
 
 with col5:
-    st.markdown("### 🌱 Environmental Indicators (Advanced)")
-    with st.expander("Advanced Satellite Data"):
-        user_inputs['ndvi'] = st.slider("NDVI (Vegetation Index)", -1.0, 1.0, float(default_values['ndvi']))
-        user_inputs['ndwi'] = st.slider("NDWI (Water Index)", -1.0, 1.0, float(default_values['ndwi']))
+    st.markdown("### 🌱 Environmental Indicators (Advanced Session)")
+    with st.expander("Advanced Environmental Indicators"):
+        user_inputs['ndvi'] = st.slider("NDVI (Vegetation)", -1.0, 1.0, float(defaults['ndvi']))
+        user_inputs['ndwi'] = st.slider("NDWI (Water Index)", -1.0, 1.0, float(defaults['ndwi']))
 
 # Predict Button
+st.markdown("---")
 if st.button("🚀 Predict Flood Risk", type="primary", use_container_width=True):
     with st.spinner("Analyzing risk factors..."):
         prediction, shap_values, input_df = get_prediction_data(user_inputs)
         
-        # Result section
+        # ✅ PART 7 — RESULT DISPLAY
         st.markdown("---")
         res_col1, res_col2 = st.columns([1, 2])
         
         with res_col1:
             st.markdown("## Prediction Result")
-            st.metric("Flood Risk Score", f"{prediction:.2f}")
+            st.metric("Flood Risk Score", round(prediction, 2))
             
             if prediction <= 30:
                 st.success("Risk Category: **Low Risk** ✅")
@@ -116,22 +144,13 @@ if st.button("🚀 Predict Flood Risk", type="primary", use_container_width=True
             
             # Local Explanation Plot (Waterfall)
             fig, ax = plt.subplots(figsize=(10, 6))
-            # shap_values[0] because we only have one row
             shap.plots.waterfall(shap_values[0], show=False)
             plt.tight_layout()
             st.pyplot(fig)
 
-        # Feature Importance Section
-        st.markdown("### 🔍 Factors Influencing This Prediction")
+        # Feature Impact Section
+        st.markdown("### 🔍 Feature Impact Summary")
         fig2, ax2 = plt.subplots(figsize=(12, 8))
-        # Summary plot for the single instance basically shows which features pushed it up/down
         shap.plots.bar(shap_values[0], show=False)
         plt.tight_layout()
         st.pyplot(fig2)
-
-st.sidebar.title("About")
-st.sidebar.info("""
-This dashboard uses an **XGBoost Regression Model** to predict the flood risk score for specific locations in Sri Lanka.
-- **SHAP (SHapley Additive exPlanations)** is used to explain the contribution of each environmental factor.
-- Red bars increase risk, Blue bars decrease risk.
-""")
