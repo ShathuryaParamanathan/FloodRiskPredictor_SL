@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.git
+.gitignore
+venv/
+.env
+node_modules/
+.ipynb_checkpoints/
+report_assets/
+scripts/
+*.md
+*.docx
+*.pkl
+!models/*.pkl
