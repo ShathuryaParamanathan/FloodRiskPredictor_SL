@@ -8,8 +8,9 @@ import shap
 import os
 
 def train_flood_model():
-    # ✅ PART 1 — Load Dataset
-    data_path = r'd:\Academics\L4S1\ML\Assignment\FloodRiskPredictor_SL\data\sri_lanka_flood_risk_dataset_cleaned.csv'
+    # Use relative path
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_path = os.path.join(base_dir, 'data', 'sri_lanka_flood_risk_dataset_cleaned.csv')
     if not os.path.exists(data_path):
         print(f"Error: Cleaned dataset not found at {data_path}")
         return
@@ -61,7 +62,7 @@ def train_flood_model():
     explainer = shap.Explainer(model.predict, shap.sample(X_train, 100))
     
     # ✅ Save Artifacts
-    models_dir = r'd:\Academics\L4S1\ML\Assignment\FloodRiskPredictor_SL\models'
+    models_dir = os.path.join(base_dir, 'models')
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
 

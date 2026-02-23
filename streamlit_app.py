@@ -12,7 +12,8 @@ st.set_page_config(page_title="SL Flood Risk Predictor", layout="wide")
 # Load model and metadata
 @st.cache_resource
 def load_assets():
-    models_dir = r'd:\Academics\L4S1\ML\Assignment\FloodRiskPredictor_SL\models'
+    # Use relative path for better portability (e.g., Docker)
+    models_dir = os.path.join(os.path.dirname(__file__), 'models')
     model = joblib.load(os.path.join(models_dir, 'xgboost_flood_model.pkl'))
     explainer = joblib.load(os.path.join(models_dir, 'shap_explainer.pkl'))
     feature_columns = joblib.load(os.path.join(models_dir, 'feature_columns.pkl'))
